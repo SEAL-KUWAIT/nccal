@@ -15,7 +15,7 @@ export default function EngineerJobs() {
   const [engineer, setEngineer] = useState(null);
   const [maintenanceType, setMaintenanceType] = useState("");
   const [questions, setQuestions] = useState([]);
-  const [answers, setAnswers] = useState({});
+  const [allAnswers, setAllAnswers] = useState({}); // Object to store answers for each maintenance type
   const [imagePreview, setImagePreview] = useState(null);
   const [customerName, setCustomerName] = useState("");
   const [inspectorSignature, setInspectorSignature] = useState(null);
@@ -37,6 +37,11 @@ export default function EngineerJobs() {
     }
   }, [router]);
 
+  // Reset image preview when maintenance type changes
+  useEffect(() => {
+    setImagePreview(null);
+  }, [maintenanceType]);
+
   useEffect(() => {
     async function fetchChecklist() {
       if (!maintenanceType) return;
@@ -51,6 +56,14 @@ export default function EngineerJobs() {
       } else {
         setQuestions(data);
         setIsSignatureVisible(true); // Show signature fields after questions are fetched
+
+        // Initialize answers for this maintenance type if they don't exist yet
+        setAllAnswers((prev) => {
+          if (!prev[maintenanceType]) {
+            return { ...prev, [maintenanceType]: {} };
+          }
+          return prev;
+        });
       }
     }
 
@@ -58,10 +71,25 @@ export default function EngineerJobs() {
   }, [maintenanceType]);
 
   const handleAnswerChange = (index, value) => {
-    setAnswers((prevAnswers) => ({
-      ...prevAnswers,
-      [index]: value,
+    setAllAnswers((prevAllAnswers) => ({
+      ...prevAllAnswers,
+      [maintenanceType]: {
+        ...prevAllAnswers[maintenanceType],
+        [index]: value,
+      },
     }));
+  };
+
+  // Function to get current answers for the selected maintenance type
+  const getCurrentAnswers = () => {
+    return allAnswers[maintenanceType] || {};
+  };
+
+  // Function to automatically adjust textarea height based on content
+  const adjustTextareaHeight = (e) => {
+    const textarea = e.target;
+    textarea.style.height = "auto"; // Reset height to recalculate
+    textarea.style.height = `${textarea.scrollHeight}px`; // Set to actual content height
   };
 
   const handleImageUpload = (e) => {
@@ -70,16 +98,15 @@ export default function EngineerJobs() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result);
+        // Store the image in the answers
+        handleAnswerChange("image", reader.result);
       };
       reader.readAsDataURL(file);
     }
   };
 
   const handleYesNoToggle = (index, value) => {
-    setAnswers((prevAnswers) => ({
-      ...prevAnswers,
-      [index]: value,
-    }));
+    handleAnswerChange(index, value);
   };
 
   const clearSignature = (signatureType) => {
@@ -95,13 +122,14 @@ export default function EngineerJobs() {
   // Function to check if all required fields are filled and signatures are done
   const validateForm = () => {
     let missing = [];
-    const newAnswers = { ...answers };
+    const currentAnswers = getCurrentAnswers();
 
     // Check if all required fields are filled
     questions.forEach((q, index) => {
       // Skip 'Yes/No' toggles that are still "No" (untouched)
-      if (q.input_type !== "image" && !newAnswers[index]?.trim()) {
+      if (q.input_type !== "image" && !currentAnswers[index]?.trim()) {
         if (q.input_type === "yesno") {
+          // We might want to check if this is actually required
           return;
         }
         missing.push(q.question); // Track missing question
@@ -131,9 +159,12 @@ export default function EngineerJobs() {
 
   const handleSubmit = () => {
     if (validateForm()) {
+      const currentAnswers = getCurrentAnswers();
+
       // If validation is successful, log answers to console as JSON
       const submission = {
-        ...answers,
+        maintenance_type: maintenanceType,
+        answers: currentAnswers,
         inspector_signature: inspectorSignature,
         customer_signature: customerSignature,
         customer_name: customerName,
@@ -143,7 +174,7 @@ export default function EngineerJobs() {
       // Log question with the respective answer
       questions.forEach((q, index) => {
         // If the answer is undefined (untouched yes/no toggle or no text input), set it to null
-        let answer = answers[index];
+        let answer = currentAnswers[index];
 
         if (q.input_type === "yesno" && answer === undefined) {
           answer = "No"; // Default to "No" if the toggle is untouched
@@ -168,6 +199,7 @@ export default function EngineerJobs() {
       console.log("Customer Signature Base64:", customerSignature);
       console.log("Image Preview Base64:", imagePreview);
 
+      console.log("Full submission data:", submission);
       // Here, you can save this data to Supabase or handle it as required.
     } else {
       console.log("Missing fields");
@@ -213,81 +245,85 @@ export default function EngineerJobs() {
                 Checklist Questions
               </h2>
               <ol className="list-decimal list-inside space-y-2">
-                {questions.map((q, index) => (
-                  <li key={index} className="text-gray-800">
-                    <div className="flex flex-col space-y-2">
-                      <span className="font-semibold">{q.question}</span>
+                {questions.map((q, index) => {
+                  const currentAnswers = getCurrentAnswers();
+                  return (
+                    <li key={index} className="text-gray-800">
+                      <div className="flex flex-col space-y-2">
+                        <span className="font-semibold">{q.question}</span>
 
-                      {/* Conditional rendering based on input_type */}
-                      {q.input_type === "text" && (
-                        <input
-                          type="text"
-                          placeholder={`Answer to ${q.question}`}
-                          value={answers[index] || ""}
-                          onChange={(e) =>
-                            handleAnswerChange(index, e.target.value)
-                          }
-                          className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      )}
-
-                      {q.input_type === "yesno" && (
-                        <div className="flex items-center space-x-4">
-                          <label className="text-gray-700">No</label>
-                          <Switch
-                            checked={answers[index] === "Yes"}
-                            onChange={(checked) =>
-                              handleYesNoToggle(index, checked ? "Yes" : "No")
-                            }
-                            offColor="#f0f0f0"
-                            onColor="#48bb78"
-                            offHandleColor="#ed8936"
-                            onHandleColor="#2b6cb0"
+                        {/* Conditional rendering based on input_type */}
+                        {q.input_type === "text" && (
+                          <textarea
+                            placeholder={`Answer to ${q.question}`}
+                            value={currentAnswers[index] || ""}
+                            onChange={(e) => {
+                              handleAnswerChange(index, e.target.value);
+                              adjustTextareaHeight(e);
+                            }}
+                            onInput={adjustTextareaHeight}
+                            className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[60px] resize-none overflow-hidden"
+                            style={{ height: "60px" }} // Starting height
                           />
-                          <label className="text-gray-700">Yes</label>
-                        </div>
-                      )}
+                        )}
 
-                      {q.input_type === "number" && (
-                        <input
-                          type="number"
-                          placeholder={`Answer to ${q.question}`}
-                          value={answers[index] || ""}
-                          onChange={(e) =>
-                            handleAnswerChange(index, e.target.value)
-                          }
-                          className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          style={{
-                            WebkitAppearance: "none",
-                            MozAppearance: "none",
-                            appearance: "none",
-                          }} // Remove up/down arrows
-                        />
-                      )}
-
-                      {q.input_type === "image" && (
-                        <div className="flex flex-col space-y-2">
-                          <label className="text-gray-700">
-                            Upload or Capture Image
-                          </label>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleImageUpload}
-                            className="px-4 py-2 border rounded-lg text-gray-700"
-                          />
-                          {imagePreview && (
-                            <img
-                              src={imagePreview}
-                              alt="Preview"
-                              className="mt-4 w-full max-w-xs rounded-lg"
+                        {q.input_type === "yesno" && (
+                          <div className="flex items-center space-x-4">
+                            <label className="text-gray-700">No</label>
+                            <Switch
+                              checked={currentAnswers[index] === "Yes"}
+                              onChange={(checked) =>
+                                handleYesNoToggle(index, checked ? "Yes" : "No")
+                              }
+                              offColor="#f0f0f0"
+                              onColor="#48bb78"
+                              offHandleColor="#ed8936"
+                              onHandleColor="#2b6cb0"
                             />
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </li>
-                ))}
+                            <label className="text-gray-700">Yes</label>
+                          </div>
+                        )}
+
+                        {q.input_type === "number" && (
+                          <input
+                            type="number"
+                            placeholder={`Answer to ${q.question}`}
+                            value={currentAnswers[index] || ""}
+                            onChange={(e) =>
+                              handleAnswerChange(index, e.target.value)
+                            }
+                            className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            style={{
+                              WebkitAppearance: "none",
+                              MozAppearance: "textfield" /* Firefox */,
+                            }}
+                          />
+                        )}
+
+                        {q.input_type === "image" && (
+                          <div className="flex flex-col space-y-2">
+                            <label className="text-gray-700">
+                              Upload or Capture Image
+                            </label>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleImageUpload}
+                              className="px-4 py-2 border rounded-lg text-gray-700"
+                            />
+                            {imagePreview && (
+                              <img
+                                src={imagePreview}
+                                alt="Preview"
+                                className="mt-4 w-full max-w-xs rounded-lg"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ol>
             </div>
           )}
