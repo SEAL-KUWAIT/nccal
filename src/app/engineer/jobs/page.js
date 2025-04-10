@@ -21,6 +21,7 @@ export default function EngineerJobs() {
   const [inspectorSignature, setInspectorSignature] = useState(null);
   const [customerSignature, setCustomerSignature] = useState(null);
   const [isSignatureVisible, setIsSignatureVisible] = useState(false);
+  const [missingFields, setMissingFields] = useState([]);
   const router = useRouter();
 
   // Use `useRef` for references
@@ -88,6 +89,88 @@ export default function EngineerJobs() {
     } else if (signatureType === "customer") {
       customerSignatureRef.current.clear();
       setCustomerSignature(null);
+    }
+  };
+
+  // Function to check if all required fields are filled and signatures are done
+  const validateForm = () => {
+    let missing = [];
+    const newAnswers = { ...answers };
+
+    // Check if all required fields are filled
+    questions.forEach((q, index) => {
+      // Skip 'Yes/No' toggles that are still "No" (untouched)
+      if (q.input_type !== "image" && !newAnswers[index]?.trim()) {
+        if (q.input_type === "yesno") {
+          return;
+        }
+        missing.push(q.question); // Track missing question
+      }
+    });
+
+    // Check if signatures are done
+    if (inspectorSignatureRef.current.isEmpty()) {
+      missing.push("Inspector Signature"); // Track missing signature
+    } else {
+      setInspectorSignature(
+        inspectorSignatureRef.current.getTrimmedCanvas().toDataURL()
+      );
+    }
+
+    if (customerSignatureRef.current.isEmpty()) {
+      missing.push("Customer Signature"); // Track missing signature
+    } else {
+      setCustomerSignature(
+        customerSignatureRef.current.getTrimmedCanvas().toDataURL()
+      );
+    }
+
+    setMissingFields(missing);
+    return missing.length === 0;
+  };
+
+  const handleSubmit = () => {
+    if (validateForm()) {
+      // If validation is successful, log answers to console as JSON
+      const submission = {
+        ...answers,
+        inspector_signature: inspectorSignature,
+        customer_signature: customerSignature,
+        customer_name: customerName,
+        image_preview: imagePreview, // include image preview in submission (base64)
+      };
+
+      // Log question with the respective answer
+      questions.forEach((q, index) => {
+        // If the answer is undefined (untouched yes/no toggle or no text input), set it to null
+        let answer = answers[index];
+
+        if (q.input_type === "yesno" && answer === undefined) {
+          answer = "No"; // Default to "No" if the toggle is untouched
+        }
+
+        // If the input type is "image", the answer should be the base64 URL of the image
+        if (q.input_type === "image" && !answer && imagePreview) {
+          answer = imagePreview; // Set answer to base64 URL of uploaded image
+        }
+
+        // If the answer is undefined or an empty string, set it to null (not the string "null")
+        if (answer === undefined || answer === "") {
+          answer = null; // Set to null (actual null value, not a string)
+        }
+
+        // Log the question with its respective answer
+        console.log(`${q.question}: ${answer}`);
+      });
+
+      // Log base64 signature and image preview
+      console.log("Inspector Signature Base64:", inspectorSignature);
+      console.log("Customer Signature Base64:", customerSignature);
+      console.log("Image Preview Base64:", imagePreview);
+
+      // Here, you can save this data to Supabase or handle it as required.
+    } else {
+      console.log("Missing fields");
     }
   };
 
@@ -174,6 +257,11 @@ export default function EngineerJobs() {
                             handleAnswerChange(index, e.target.value)
                           }
                           className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          style={{
+                            WebkitAppearance: "none",
+                            MozAppearance: "none",
+                            appearance: "none",
+                          }} // Remove up/down arrows
                         />
                       )}
 
@@ -259,8 +347,7 @@ export default function EngineerJobs() {
                 <label className="text-gray-700">Customer Name</label>
                 <input
                   type="text"
-                  id="customerName"
-                  placeholder="Enter Customer Name"
+                  placeholder="Enter customer name"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -268,9 +355,32 @@ export default function EngineerJobs() {
               </div>
             </div>
           )}
+
+          {/* Missing Fields */}
+          {missingFields.length > 0 && (
+            <div className="bg-red-200 text-red-800 p-4 rounded-lg">
+              <h3 className="font-semibold">Missing Fields:</h3>
+              <ul className="list-disc list-inside">
+                {missingFields.map((field, index) => (
+                  <li key={index}>{field}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Submit Button */}
+          <div className="mt-6">
+            <button
+              onClick={handleSubmit}
+              className="w-full md:w-1/3 py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
+              disabled={!maintenanceType} // Disable if no maintenance type selected
+            >
+              Submit
+            </button>
+          </div>
         </div>
       ) : (
-        <p>Loading...</p>
+        <div>Loading...</div>
       )}
     </div>
   );
