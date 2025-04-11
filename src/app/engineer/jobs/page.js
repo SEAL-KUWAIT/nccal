@@ -22,16 +22,30 @@ export default function EngineerJobs() {
   const [customerSignature, setCustomerSignature] = useState(null);
   const [isSignatureVisible, setIsSignatureVisible] = useState(false);
   const [missingFields, setMissingFields] = useState([]);
+
+  // New state for common fields
+  const [dateIn, setDateIn] = useState("");
+  const [dateOut, setDateOut] = useState("");
+  const [inspectorName, setInspectorName] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [totalHours, setTotalHours] = useState("00:00:00");
+  const [remark, setRemark] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const router = useRouter();
 
   // Use `useRef` for references
   const inspectorSignatureRef = useRef(null);
   const customerSignatureRef = useRef(null);
+  const remarkTextareaRef = useRef(null);
+  const customerTextareaRef = useRef(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("engineer");
     if (stored) {
-      setEngineer(JSON.parse(stored));
+      const engineerData = JSON.parse(stored);
+      setEngineer(engineerData);
+      setInspectorName(engineerData.name); // Set inspector name to default engineer name
     } else {
       router.replace("/engineer/login");
     }
@@ -47,7 +61,7 @@ export default function EngineerJobs() {
       if (!maintenanceType) return;
       const { data, error } = await supabase
         .from("checklist_templates")
-        .select("question, input_type, order")
+        .select("id, question, input_type, order")
         .eq("type", maintenanceType)
         .order("order", { ascending: true });
 
@@ -69,6 +83,31 @@ export default function EngineerJobs() {
 
     fetchChecklist();
   }, [maintenanceType]);
+
+  // Function to calculate total hours between dateIn and dateOut
+  useEffect(() => {
+    if (dateIn && dateOut) {
+      const inDate = new Date(dateIn);
+      const outDate = new Date(dateOut);
+
+      if (!isNaN(inDate) && !isNaN(outDate) && outDate >= inDate) {
+        const diffMs = outDate - inDate;
+        const diffHrs = Math.floor(diffMs / 3600000);
+        const diffMins = Math.floor((diffMs % 3600000) / 60000);
+        const diffSecs = Math.floor((diffMs % 60000) / 1000);
+
+        // Set the formatted time string for display
+        setTotalHours(
+          `${String(diffHrs).padStart(2, "0")}:${String(diffMins).padStart(
+            2,
+            "0"
+          )}:${String(diffSecs).padStart(2, "0")}`
+        );
+      } else {
+        setTotalHours("00:00:00");
+      }
+    }
+  }, [dateIn, dateOut]);
 
   const handleAnswerChange = (index, value) => {
     setAllAnswers((prevAllAnswers) => ({
@@ -92,14 +131,46 @@ export default function EngineerJobs() {
     textarea.style.height = `${textarea.scrollHeight}px`; // Set to actual content height
   };
 
-  const handleImageUpload = (e) => {
+  // Set current date and time (Kuwait time) for dateIn or dateOut
+  const setCurrentDateTime = (field) => {
+    // Kuwait is UTC+3
+    const now = new Date();
+    const kuwaitTime = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+
+    // Format to YYYY-MM-DDThh:mm:ss
+    const formattedDate = kuwaitTime
+      .toISOString()
+      .slice(0, 19)
+      .replace("Z", "");
+
+    if (field === "in") {
+      setDateIn(formattedDate);
+    } else if (field === "out") {
+      setDateOut(formattedDate);
+    }
+  };
+
+  const handleImageUpload = (e, questionIndex) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreview(reader.result);
-        // Store the image in the answers
-        handleAnswerChange("image", reader.result);
+        const imageData = reader.result;
+
+        // Update the specific question's image in the answers
+        handleAnswerChange(questionIndex, "Yes"); // Mark that this question has an image
+
+        // Store the image data in a special key
+        setAllAnswers((prevAllAnswers) => ({
+          ...prevAllAnswers,
+          [maintenanceType]: {
+            ...prevAllAnswers[maintenanceType],
+            [`image_${questionIndex}`]: imageData, // Store image with unique key
+          },
+        }));
+
+        // If it's the first/currently visible image, also set the preview
+        setImagePreview(imageData);
       };
       reader.readAsDataURL(file);
     }
@@ -120,36 +191,50 @@ export default function EngineerJobs() {
   };
 
   // Function to check if all required fields are filled and signatures are done
+  // Modify the validateForm function to ensure signatures are properly set
   const validateForm = () => {
     let missing = [];
     const currentAnswers = getCurrentAnswers();
 
+    // Check common fields
+    if (!dateIn) missing.push("Date In");
+    if (!dateOut) missing.push("Date Out");
+    if (!inspectorName.trim()) missing.push("Inspector Name");
+    if (!customer.trim()) missing.push("Customer");
+
     // Check if all required fields are filled
     questions.forEach((q, index) => {
-      // Skip 'Yes/No' toggles that are still "No" (untouched)
       if (q.input_type !== "image" && !currentAnswers[index]?.trim()) {
         if (q.input_type === "yesno") {
-          // We might want to check if this is actually required
           return;
         }
-        missing.push(q.question); // Track missing question
+        missing.push(q.question);
       }
     });
 
-    // Check if signatures are done
-    if (inspectorSignatureRef.current.isEmpty()) {
-      missing.push("Inspector Signature"); // Track missing signature
-    } else {
+    // Check and capture inspector signature immediately
+    if (
+      inspectorSignatureRef.current &&
+      inspectorSignatureRef.current.isEmpty()
+    ) {
+      missing.push("Inspector Signature");
+    } else if (inspectorSignatureRef.current) {
+      // Set inspector signature immediately when validating
       setInspectorSignature(
-        inspectorSignatureRef.current.getTrimmedCanvas().toDataURL()
+        inspectorSignatureRef.current.getTrimmedCanvas().toDataURL("image/png")
       );
     }
 
-    if (customerSignatureRef.current.isEmpty()) {
-      missing.push("Customer Signature"); // Track missing signature
-    } else {
+    // Check and capture customer signature immediately
+    if (
+      customerSignatureRef.current &&
+      customerSignatureRef.current.isEmpty()
+    ) {
+      missing.push("Customer Signature");
+    } else if (customerSignatureRef.current) {
+      // Set customer signature immediately when validating
       setCustomerSignature(
-        customerSignatureRef.current.getTrimmedCanvas().toDataURL()
+        customerSignatureRef.current.getTrimmedCanvas().toDataURL("image/png")
       );
     }
 
@@ -157,53 +242,137 @@ export default function EngineerJobs() {
     return missing.length === 0;
   };
 
-  const handleSubmit = () => {
-    if (validateForm()) {
-      const currentAnswers = getCurrentAnswers();
-
-      // If validation is successful, log answers to console as JSON
-      const submission = {
-        maintenance_type: maintenanceType,
-        answers: currentAnswers,
-        inspector_signature: inspectorSignature,
-        customer_signature: customerSignature,
-        customer_name: customerName,
-        image_preview: imagePreview, // include image preview in submission (base64)
-      };
-
-      // Log question with the respective answer
-      questions.forEach((q, index) => {
-        // If the answer is undefined (untouched yes/no toggle or no text input), set it to null
-        let answer = currentAnswers[index];
-
-        if (q.input_type === "yesno" && answer === undefined) {
-          answer = "No"; // Default to "No" if the toggle is untouched
-        }
-
-        // If the input type is "image", the answer should be the base64 URL of the image
-        if (q.input_type === "image" && !answer && imagePreview) {
-          answer = imagePreview; // Set answer to base64 URL of uploaded image
-        }
-
-        // If the answer is undefined or an empty string, set it to null (not the string "null")
-        if (answer === undefined || answer === "") {
-          answer = null; // Set to null (actual null value, not a string)
-        }
-
-        // Log the question with its respective answer
-        console.log(`${q.question}: ${answer}`);
-      });
-
-      // Log base64 signature and image preview
-      console.log("Inspector Signature Base64:", inspectorSignature);
-      console.log("Customer Signature Base64:", customerSignature);
-      console.log("Image Preview Base64:", imagePreview);
-
-      console.log("Full submission data:", submission);
-      // Here, you can save this data to Supabase or handle it as required.
-    } else {
-      console.log("Missing fields");
+  const handleSubmit = async () => {
+    if (!validateForm()) {
+      alert("Please fill all required fields.");
+      return;
     }
+
+    setIsSubmitting(true);
+    const currentAnswers = getCurrentAnswers();
+
+    try {
+      // Force-capture signatures again to ensure they're available
+      const inspectorSig = inspectorSignatureRef.current.isEmpty()
+        ? null
+        : inspectorSignatureRef.current
+            .getTrimmedCanvas()
+            .toDataURL("image/png");
+
+      const customerSig = customerSignatureRef.current.isEmpty()
+        ? null
+        : customerSignatureRef.current
+            .getTrimmedCanvas()
+            .toDataURL("image/png");
+
+      // Update state with latest signatures
+      setInspectorSignature(inspectorSig);
+      setCustomerSignature(customerSig);
+
+      // Check for null signatures before submission
+      if (!inspectorSig) {
+        throw new Error("Inspector signature is required");
+      }
+
+      if (!customerSig) {
+        throw new Error("Customer signature is required");
+      }
+
+      // Create the job card record
+      const { data: jobCard, error: jobCardError } = await supabase
+        .from("job_cards")
+        .insert({
+          inspector_id: engineer.id,
+          customer_name: customerName || customer,
+          date_in: dateIn,
+          date_out: dateOut,
+          total_hours: convertTimeStringToSeconds(totalHours),
+          remarks: remark,
+          customer_sign_name: customerName,
+          customer_signature: customerSig,
+          inspector_signature: inspectorSig,
+          type: maintenanceType,
+        })
+        .select("id");
+
+      if (jobCardError) throw jobCardError;
+
+      // Now store all answers in the answers table
+      if (jobCard && jobCard.length > 0) {
+        const jobCardId = jobCard[0].id;
+
+        // Prepare batch insert for all answers
+        const answersToInsert = [];
+
+        // Process all questions and their answers
+        questions.forEach((question, index) => {
+          // Special handling for image-type questions
+          if (question.input_type === "image") {
+            const imageData = allAnswers[maintenanceType]?.[`image_${index}`];
+            const hasImage = !!imageData;
+
+            answersToInsert.push({
+              job_card_id: jobCardId,
+              answer: hasImage ? "Yes" : "No",
+              image_url: imageData || null,
+              template_id: question.id,
+            });
+          }
+          // For all other questions
+          else if (
+            question.input_type === "yesno" ||
+            (currentAnswers[index] &&
+              currentAnswers[index].toString().trim() !== "")
+          ) {
+            answersToInsert.push({
+              job_card_id: jobCardId,
+              answer:
+                question.input_type === "yesno"
+                  ? currentAnswers[index] || "No"
+                  : currentAnswers[index],
+              image_url: null,
+              template_id: question.id,
+            });
+          }
+        });
+
+        // Insert all answers in a batch
+        if (answersToInsert.length > 0) {
+          const { error: answersError } = await supabase
+            .from("answers")
+            .insert(answersToInsert);
+
+          if (answersError) throw answersError;
+        }
+
+        // Success - redirect or show confirmation
+        alert("Maintenance job card submitted successfully!");
+
+        // Optional: Clear form or redirect
+        setMaintenanceType("");
+        setQuestions([]);
+        setAllAnswers({});
+        setImagePreview(null);
+        setCustomerName("");
+        setInspectorSignature(null);
+        setCustomerSignature(null);
+        setDateIn("");
+        setDateOut("");
+        setRemark("");
+        setTotalHours("00:00:00");
+      }
+    } catch (error) {
+      console.error("Error submitting form:", error.message);
+      alert("Error submitting form: " + error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Add this helper function if you haven't already
+  const convertTimeStringToSeconds = (timeString) => {
+    const [hours, minutes, seconds] = timeString.split(":").map(Number);
+    return hours * 3600 + minutes * 60 + seconds;
   };
 
   return (
@@ -239,6 +408,148 @@ export default function EngineerJobs() {
             </select>
           </div>
 
+          {/* Common Fields Section */}
+          {maintenanceType && (
+            <div className="space-y-6 border-t border-b border-gray-200 py-6">
+              <h2 className="text-xl font-semibold text-gray-700">
+                Common Information
+              </h2>
+
+              {/* Date In Field */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="dateIn"
+                    className="block text-sm font-medium text-gray-700"
+                  >
+                    Date In
+                  </label>
+                  <div className="flex space-x-2">
+                    <input
+                      type="datetime-local"
+                      id="dateIn"
+                      value={dateIn}
+                      onChange={(e) => setDateIn(e.target.value)}
+                      className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 flex-grow"
+                    />
+                    <button
+                      onClick={() => setCurrentDateTime("in")}
+                      className="px-3 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 whitespace-nowrap"
+                    >
+                      Set to Now
+                    </button>
+                  </div>
+                </div>
+
+                {/* Date Out Field */}
+                <div className="space-y-2">
+                  <label
+                    htmlFor="dateOut"
+                    className="block text-sm font-medium text-gray-700"
+                  >
+                    Date Out
+                  </label>
+                  <div className="flex space-x-2">
+                    <input
+                      type="datetime-local"
+                      id="dateOut"
+                      value={dateOut}
+                      onChange={(e) => setDateOut(e.target.value)}
+                      className="px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 flex-grow"
+                    />
+                    <button
+                      onClick={() => setCurrentDateTime("out")}
+                      className="px-3 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 whitespace-nowrap"
+                    >
+                      Set to Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Inspector and Customer Fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="inspectorName"
+                    className="block text-sm font-medium text-gray-700"
+                  >
+                    Inspector
+                  </label>
+                  <input
+                    type="text"
+                    id="inspectorName"
+                    value={inspectorName}
+                    onChange={(e) => setInspectorName(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="customer"
+                    className="block text-sm font-medium text-gray-700"
+                  >
+                    Customer
+                  </label>
+                  <textarea
+                    id="customer"
+                    ref={customerTextareaRef}
+                    value={customer}
+                    onChange={(e) => {
+                      setCustomer(e.target.value);
+                      adjustTextareaHeight(e);
+                    }}
+                    onInput={adjustTextareaHeight}
+                    className="w-full px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[60px] resize-none overflow-hidden"
+                    style={{ height: "60px" }}
+                  />
+                </div>
+              </div>
+
+              {/* Total Hours and Remarks */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="totalHours"
+                    className="block text-sm font-medium text-gray-700"
+                  >
+                    Total Hours
+                  </label>
+                  <input
+                    type="text"
+                    id="totalHours"
+                    value={totalHours}
+                    readOnly
+                    className="w-full px-4 py-2 border rounded-lg text-gray-700 bg-gray-50"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="remarks"
+                    className="block text-sm font-medium text-gray-700"
+                  >
+                    Remarks
+                  </label>
+                  <textarea
+                    id="remarks"
+                    ref={remarkTextareaRef}
+                    value={remark}
+                    onChange={(e) => {
+                      setRemark(e.target.value);
+                      adjustTextareaHeight(e);
+                    }}
+                    onInput={adjustTextareaHeight}
+                    className="w-full px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[60px] resize-none overflow-hidden"
+                    style={{ height: "60px" }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Checklist Questions Section */}
           {questions.length > 0 && (
             <div className="space-y-4">
               <h2 className="text-xl font-semibold text-gray-700">
@@ -308,12 +619,16 @@ export default function EngineerJobs() {
                             <input
                               type="file"
                               accept="image/*"
-                              onChange={handleImageUpload}
+                              onChange={(e) => handleImageUpload(e, index)}
                               className="px-4 py-2 border rounded-lg text-gray-700"
                             />
-                            {imagePreview && (
+                            {allAnswers[maintenanceType]?.[
+                              `image_${index}`
+                            ] && (
                               <img
-                                src={imagePreview}
+                                src={
+                                  allAnswers[maintenanceType][`image_${index}`]
+                                }
                                 alt="Preview"
                                 className="mt-4 w-full max-w-xs rounded-lg"
                               />
@@ -409,9 +724,9 @@ export default function EngineerJobs() {
             <button
               onClick={handleSubmit}
               className="w-full md:w-1/3 py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
-              disabled={!maintenanceType} // Disable if no maintenance type selected
+              disabled={!maintenanceType || isSubmitting} // Disable if no maintenance type selected or form is submitting
             >
-              Submit
+              {isSubmitting ? "Submitting..." : "Submit"}
             </button>
           </div>
         </div>
